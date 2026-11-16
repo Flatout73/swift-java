@@ -1470,10 +1470,7 @@ extension JNISwift2JavaGenerator {
     }
 
     /// Returns the conversion string applied to the placeholder.
-    ///
     /// - Parameter asyncTaskPreamble: For `.asyncCompleteFuture`, the statements that convert the JNI arguments.
-    ///   They are printed inside the task, so the task captures only the JNI values and not the Swift values
-    ///   converted from them, which are not `Sendable` in general.
     func render(_ printer: inout SwiftPrinter, _ placeholder: String, asyncTaskPreamble: String = "") -> String {
       // NOTE: 'printer' is used if the conversion wants to cause side-effects.
       // E.g. storing a temporary values into a variable.
