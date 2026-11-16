@@ -269,7 +269,10 @@ final class ByteArrayTests {
         public func Java_com_example_swift_SwiftModule__00024receiveBuffer___3B(environment: UnsafeMutablePointer<JNIEnv?>!, thisClass: jclass, data: jbyteArray?) {
           let data$count = Int(environment.interface.GetArrayLength(environment, data))
           let data$ptr = environment.interface.GetByteArrayElements(environment, data, nil)!
-          defer { environment.interface.ReleaseByteArrayElements(environment, data, data$ptr, jint(JNI_ABORT)) }
+          defer {
+            let data$releaseEnvironment = try! JavaVirtualMachine.shared().environment()
+            data$releaseEnvironment.interface.ReleaseByteArrayElements(data$releaseEnvironment, data, data$ptr, jint(JNI_ABORT))
+          }
           let data$rbp = UnsafeRawBufferPointer(start: data$ptr, count: data$count)
           SwiftModule.receiveBuffer(data: data$rbp)
         }

@@ -43,6 +43,7 @@ struct JNIAsyncArgumentConversionTests {
         ...
         task = Task.immediate {
         var environment = try! JavaVirtualMachine.shared().environment()
+        ...
         assert(p != 0, "p memory address was null")
         let pBits$ = Int(Int64(fromJNI: p, in: environment))
         let p$ = UnsafeMutablePointer<Payload>(bitPattern: pBits$)
@@ -51,6 +52,7 @@ struct JNIAsyncArgumentConversionTests {
         ...
         task = Task {
         var environment = try! JavaVirtualMachine.shared().environment()
+        ...
         assert(p != 0, "p memory address was null")
         ...
         let swiftResult$ = await SwiftModule.async(p: p$.pointee)
@@ -81,6 +83,7 @@ struct JNIAsyncArgumentConversionTests {
         ...
         task = Task.immediate {
         var environment = try! JavaVirtualMachine.shared().environment()
+        ...
         let cBits$ = Int(Int64(fromJNI: c, in: environment))
         let c$ = UnsafeMutablePointer<MyClass>(bitPattern: cBits$)
         """
@@ -113,6 +116,7 @@ struct JNIAsyncArgumentConversionTests {
         ...
         task = Task.immediate {
         var environment = try! JavaVirtualMachine.shared().environment()
+        ...
         let nswiftObject$: (any Named)
         ...
         let swiftResult$ = await SwiftModule.async(n: nswiftObject$)
@@ -120,6 +124,44 @@ struct JNIAsyncArgumentConversionTests {
       ],
       notExpectedChunks: [
         "UnsafeSendable$"
+      ]
+    )
+  }
+
+  @Test("Import: async buffer cleanup uses the current environment before deleting global references", arguments: [false, true], [false, true])
+  func bufferCleanup_swift(mutable: Bool, throwing: Bool) throws {
+    let bufferType = mutable ? "UnsafeMutableRawBufferPointer" : "UnsafeRawBufferPointer"
+    let releaseMode = mutable ? "0" : "jint(JNI_ABORT)"
+    let throwsClause = throwing ? " throws" : ""
+    let tryClause = throwing ? "try " : ""
+
+    try assertOutput(
+      input: "public func receiveBuffer(data: \(bufferType)) async\(throwsClause)",
+      .jni,
+      .swift,
+      detectChunkByInitialLines: 1,
+      expectedChunks: ["Task.immediate", "Task"].map { task in
+        """
+        task = \(task) {
+          var environment = try! JavaVirtualMachine.shared().environment()
+          defer {
+            let deferEnvironment = try! JavaVirtualMachine.shared().environment()
+            deferEnvironment.interface.DeleteGlobalRef(deferEnvironment, globalFuture)
+            deferEnvironment.interface.DeleteGlobalRef(deferEnvironment, data)
+          }
+          let data$count = Int(environment.interface.GetArrayLength(environment, data))
+          let data$ptr = environment.interface.GetByteArrayElements(environment, data, nil)!
+          defer {
+            let data$releaseEnvironment = try! JavaVirtualMachine.shared().environment()
+            data$releaseEnvironment.interface.ReleaseByteArrayElements(data$releaseEnvironment, data, data$ptr, \(releaseMode))
+          }
+          let data$rbp = \(bufferType)(start: data$ptr, count: data$count)
+          ...
+          \(tryClause)await SwiftModule.receiveBuffer(data: data$rbp)
+        """
+      },
+      notExpectedChunks: [
+        "environment.interface.ReleaseByteArrayElements(environment,"
       ]
     )
   }

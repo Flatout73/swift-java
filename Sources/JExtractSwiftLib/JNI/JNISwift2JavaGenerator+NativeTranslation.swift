@@ -2004,15 +2004,16 @@ extension JNISwift2JavaGenerator {
         }
 
         func printTaskBody(printer: inout SwiftPrinter) {
-          if !asyncTaskPreamble.isEmpty {
-            printer.print(asyncTaskPreamble)
-          }
+          // Register this first so argument cleanup runs while the global references are still valid.
           printer.printBraceBlock("defer") { printer in
             // Defer might on any thread, so we need to attach environment.
             printer.print("let deferEnvironment = try! JavaVirtualMachine.shared().environment()")
             for globalRef in globalRefs {
               printer.print("deferEnvironment.interface.DeleteGlobalRef(deferEnvironment, \(globalRef))")
             }
+          }
+          if !asyncTaskPreamble.isEmpty {
+            printer.print(asyncTaskPreamble)
           }
           if isThrowing {
             printer.printBraceBlock("do") { printer in
@@ -2088,13 +2089,17 @@ extension JNISwift2JavaGenerator {
         let countVar = "\(name)$count"
         let ptrVar = "\(name)$ptr"
         let rbpVar = "\(name)$rbp"
+        let releaseEnvironmentVar = "\(name)$releaseEnvironment"
         let bufferPointerType = mutable ? "UnsafeMutableRawBufferPointer" : "UnsafeRawBufferPointer"
         let releaseMode = mutable ? "0" : "jint(JNI_ABORT)"
         printer.print(
           """
           let \(countVar) = Int(environment.interface.GetArrayLength(environment, \(inner)))
           let \(ptrVar) = environment.interface.GetByteArrayElements(environment, \(inner), nil)!
-          defer { environment.interface.ReleaseByteArrayElements(environment, \(inner), \(ptrVar), \(releaseMode)) }
+          defer {
+            let \(releaseEnvironmentVar) = try! JavaVirtualMachine.shared().environment()
+            \(releaseEnvironmentVar).interface.ReleaseByteArrayElements(\(releaseEnvironmentVar), \(inner), \(ptrVar), \(releaseMode))
+          }
           let \(rbpVar) = \(bufferPointerType)(start: \(ptrVar), count: \(countVar))
           """
         )

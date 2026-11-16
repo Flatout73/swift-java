@@ -320,15 +320,15 @@ struct JNIAsyncTests {
             if #available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, *) {
               task = Task.immediate {
                 var environment = try! JavaVirtualMachine.shared().environment()
+                defer {
+                  let deferEnvironment = try! JavaVirtualMachine.shared().environment()
+                  deferEnvironment.interface.DeleteGlobalRef(deferEnvironment, globalFuture)
+                }
                 assert(c != 0, "c memory address was null")
                 let cBits$ = Int(Int64(fromJNI: c, in: environment))
                 let c$ = UnsafeMutablePointer<MyClass>(bitPattern: cBits$)
                 guard let c$ else {
                   fatalError("c memory address was null in call to \\(#function)!")
-                }
-                defer {
-                  let deferEnvironment = try! JavaVirtualMachine.shared().environment()
-                  deferEnvironment.interface.DeleteGlobalRef(deferEnvironment, globalFuture)
                 }
                 let swiftResult$ = await SwiftModule.async(c: c$.pointee)
                 environment = try! JavaVirtualMachine.shared().environment()
@@ -343,15 +343,15 @@ struct JNIAsyncTests {
           if task == nil {
             task = Task {
               var environment = try! JavaVirtualMachine.shared().environment()
+              defer {
+                let deferEnvironment = try! JavaVirtualMachine.shared().environment()
+                deferEnvironment.interface.DeleteGlobalRef(deferEnvironment, globalFuture)
+              }
               assert(c != 0, "c memory address was null")
               let cBits$ = Int(Int64(fromJNI: c, in: environment))
               let c$ = UnsafeMutablePointer<MyClass>(bitPattern: cBits$)
               guard let c$ else {
                 fatalError("c memory address was null in call to \\(#function)!")
-              }
-              defer {
-                let deferEnvironment = try! JavaVirtualMachine.shared().environment()
-                deferEnvironment.interface.DeleteGlobalRef(deferEnvironment, globalFuture)
               }
               let swiftResult$ = await SwiftModule.async(c: c$.pointee)
               environment = try! JavaVirtualMachine.shared().environment()
