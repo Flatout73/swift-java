@@ -1469,34 +1469,12 @@ extension JNISwift2JavaGenerator {
       }
     }
 
-    /// The pointer `render` declares for `.extractSwiftValue` and `.extractMetatypeValue`.
-    static func extractedPointerName(for inner: String) -> String {
-      "\(inner)$"
-    }
-
-    /// The existential `render` declares for `.interfaceToSwiftObject`.
-    static func swiftObjectName(for inner: String) -> String {
-      "\(inner)swiftObject$"
-    }
-
-    /// The non-`Sendable` locals that `render` declares for a parameter whose conversion starts at
-    /// `placeholder`. The task closures of an async thunk capture them, so the thunk copies them
-    /// through `nonisolated(unsafe)` variables, as it does for the `self` pointer.
-    func asyncTaskCaptures(placeholder: String) -> [(name: String, isExistential: Bool)] {
-      switch self {
-      case .extractSwiftValue(.placeholder, _, _, _), .extractMetatypeValue(.placeholder):
-        [(Self.extractedPointerName(for: placeholder), false)]
-      case .interfaceToSwiftObject(.placeholder, _, _, _):
-        [(Self.swiftObjectName(for: placeholder), true)]
-      case .pointee(let inner), .optionalChain(let inner):
-        inner.asyncTaskCaptures(placeholder: placeholder)
-      default:
-        []
-      }
-    }
-
     /// Returns the conversion string applied to the placeholder.
-    func render(_ printer: inout SwiftPrinter, _ placeholder: String) -> String {
+    ///
+    /// - Parameter asyncTaskPreamble: For `.asyncCompleteFuture`, the statements that convert the JNI arguments.
+    ///   They are printed inside the task, so the task captures only the JNI values and not the Swift values
+    ///   converted from them, which are not `Sendable` in general.
+    func render(_ printer: inout SwiftPrinter, _ placeholder: String, asyncTaskPreamble: String = "") -> String {
       // NOTE: 'printer' is used if the conversion wants to cause side-effects.
       // E.g. storing a temporary values into a variable.
       switch self {
@@ -1532,7 +1510,7 @@ extension JNISwift2JavaGenerator {
         let allowsJavaImplementations
       ):
         let inner = inner.render(&printer, placeholder)
-        let variableName = Self.swiftObjectName(for: inner)
+        let variableName = "\(inner)swiftObject$"
         let existentialType = SwiftKitPrinting.renderExistentialType(protocolTypes)
         printer.print("let \(variableName): \(existentialType)")
 
@@ -1608,7 +1586,7 @@ extension JNISwift2JavaGenerator {
 
       case .extractSwiftValue(let inner, let swiftType, let allowNil, let convertLongFromJNI):
         let inner = inner.render(&printer, placeholder)
-        let pointerName = Self.extractedPointerName(for: inner)
+        let pointerName = "\(inner)$"
         if !allowNil {
           printer.print(#"assert(\#(inner) != 0, "\#(inner) memory address was null")"#)
         }
@@ -1631,7 +1609,7 @@ extension JNISwift2JavaGenerator {
 
       case .extractMetatypeValue(let inner):
         let inner = inner.render(&printer, placeholder)
-        let pointerName = Self.extractedPointerName(for: inner)
+        let pointerName = "\(inner)$"
         printer.print(
           """
           let \(inner)Bits$ = Int(Int64(fromJNI: \(inner), in: environment))
@@ -1981,44 +1959,6 @@ extension JNISwift2JavaGenerator {
           """
         )
 
-        // Non-Sendable locals that the task closures capture: the converted `self` and parameters.
-        var taskCaptures: [(unsafeSendable: String, original: String, isExistential: Bool)] = []
-        if let selfParameter = nativeFunctionSignature.selfParameter {
-          if case .extractSwiftProtocolValue = selfParameter.conversion {
-            for parameter in selfParameter.parameters {
-              taskCaptures.append(("\(parameter.name)ExistentialUnsafeSendable$", "\(parameter.name)Existential$", true))
-            }
-          } else {
-            for parameter in selfParameter.parameters {
-              taskCaptures.append(("\(parameter.name)UnsafeSendable$", "\(parameter.name)$", false))
-            }
-          }
-        }
-        for parameter in nativeFunctionSignature.parameters {
-          guard let name = parameter.parameters.first?.name else { continue }
-          for capture in parameter.conversion.asyncTaskCaptures(placeholder: name) {
-            taskCaptures.append(("\(capture.name.dropLast())UnsafeSendable$", capture.name, capture.isExistential))
-          }
-        }
-        for capture in taskCaptures {
-          if capture.isExistential {
-            // In the Swift 6 language mode a `nonisolated(unsafe) let` holding an existential still fails the
-            // `sending` check of the task closures; a `var` passes it. `@diagnose` on the thunk silences the
-            // "never mutated" warning from Swift 6.4 on.
-            printer.print(
-              """
-              #if swift(>=6)
-              nonisolated(unsafe) var \(capture.unsafeSendable) = \(capture.original)
-              #else
-              nonisolated(unsafe) let \(capture.unsafeSendable) = \(capture.original)
-              #endif
-              """
-            )
-          } else {
-            printer.print("nonisolated(unsafe) let \(capture.unsafeSendable) = \(capture.original)")
-          }
-        }
-
         func printDo(printer: inout SwiftPrinter) {
           // Make sure try/await are printed when necessary and avoid duplicate, or wrong-order, keywords (which would cause warnings)
           let placeholderWithoutTry =
@@ -2064,8 +2004,8 @@ extension JNISwift2JavaGenerator {
         }
 
         func printTaskBody(printer: inout SwiftPrinter) {
-          for capture in taskCaptures {
-            printer.print("let \(capture.original) = \(capture.unsafeSendable)")
+          if !asyncTaskPreamble.isEmpty {
+            printer.print(asyncTaskPreamble)
           }
           printer.printBraceBlock("defer") { printer in
             // Defer might on any thread, so we need to attach environment.

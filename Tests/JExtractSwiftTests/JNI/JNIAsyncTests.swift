@@ -314,20 +314,18 @@ struct JNIAsyncTests {
         """
         @_cdecl("Java_com_example_swift_SwiftModule__00024async__JLjava_util_concurrent_CompletableFuture_2")
         public func Java_com_example_swift_SwiftModule__00024async__JLjava_util_concurrent_CompletableFuture_2(environment: UnsafeMutablePointer<JNIEnv?>!, thisClass: jclass, c: jlong, result_future: jobject?) {
-          assert(c != 0, "c memory address was null")
-          let cBits$ = Int(Int64(fromJNI: c, in: environment))
-          let c$ = UnsafeMutablePointer<MyClass>(bitPattern: cBits$)
-          guard let c$ else {
-            fatalError("c memory address was null in call to \\(#function)!")
-          }
           nonisolated(unsafe) let globalFuture = environment.interface.NewGlobalRef(environment, result_future)
-          nonisolated(unsafe) let cUnsafeSendable$ = c$
           var task: Task<Void, Never>? = nil
           #if swift(>=6.2)
             if #available(macOS 26.0, iOS 26.0, watchOS 26.0, tvOS 26.0, *) {
               task = Task.immediate {
                 var environment = try! JavaVirtualMachine.shared().environment()
-                let c$ = cUnsafeSendable$
+                assert(c != 0, "c memory address was null")
+                let cBits$ = Int(Int64(fromJNI: c, in: environment))
+                let c$ = UnsafeMutablePointer<MyClass>(bitPattern: cBits$)
+                guard let c$ else {
+                  fatalError("c memory address was null in call to \\(#function)!")
+                }
                 defer {
                   let deferEnvironment = try! JavaVirtualMachine.shared().environment()
                   deferEnvironment.interface.DeleteGlobalRef(deferEnvironment, globalFuture)
@@ -345,7 +343,12 @@ struct JNIAsyncTests {
           if task == nil {
             task = Task {
               var environment = try! JavaVirtualMachine.shared().environment()
-              let c$ = cUnsafeSendable$
+              assert(c != 0, "c memory address was null")
+              let cBits$ = Int(Int64(fromJNI: c, in: environment))
+              let c$ = UnsafeMutablePointer<MyClass>(bitPattern: cBits$)
+              guard let c$ else {
+                fatalError("c memory address was null in call to \\(#function)!")
+              }
               defer {
                 let deferEnvironment = try! JavaVirtualMachine.shared().environment()
                 deferEnvironment.interface.DeleteGlobalRef(deferEnvironment, globalFuture)

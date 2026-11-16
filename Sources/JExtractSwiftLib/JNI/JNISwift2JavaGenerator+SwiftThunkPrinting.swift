@@ -608,6 +608,26 @@ extension JNISwift2JavaGenerator {
 
     let tryClause: String = decl.isThrowing ? "try " : ""
 
+    // An async thunk makes the call in a task. Its argument conversions are printed inside that task,
+    // so the task captures the JNI values, not the Swift values converted from them.
+    let isAsyncThunk: Bool
+    if case .asyncCompleteFuture = nativeSignature.result.conversion {
+      isAsyncThunk = true
+    } else {
+      isAsyncThunk = false
+    }
+    var asyncTaskPrinter = printer
+    asyncTaskPrinter.contents = ""
+    asyncTaskPrinter.indentationDepth = 0
+    asyncTaskPrinter.atNewline = true
+    func renderArgumentConversion(_ conversion: NativeSwiftConversionStep, _ placeholder: String) -> String {
+      if isAsyncThunk {
+        conversion.render(&asyncTaskPrinter, placeholder)
+      } else {
+        conversion.render(&printer, placeholder)
+      }
+    }
+
     // Regular parameters.
     var arguments: [String] = [String]()
     var indirectVariables: [(name: String, lowered: String)] = []
@@ -615,7 +635,7 @@ extension JNISwift2JavaGenerator {
 
     for (idx, parameter) in nativeSignature.parameters.enumerated() {
       let javaParameterName = translatedDecl.translatedFunctionSignature.parameters[idx].parameter.name
-      let lowered = parameter.conversion.render(&printer, javaParameterName)
+      let lowered = renderArgumentConversion(parameter.conversion, javaParameterName)
       arguments.append(lowered)
 
       parameter.indirectConversion.flatMap {
@@ -682,10 +702,7 @@ extension JNISwift2JavaGenerator {
     let callee: String =
       switch decl.functionSignature.selfParameter {
       case .instance:
-        nativeSignature.selfParameter!.conversion.render(
-          &printer,
-          "selfPointer",
-        )
+        renderArgumentConversion(nativeSignature.selfParameter!.conversion, "selfPointer")
       case .staticMethod(let selfType), .classMethod(let selfType), .initializer(let selfType):
         "\(selfType)"
       case .none:
@@ -764,8 +781,12 @@ extension JNISwift2JavaGenerator {
     }
 
     // Lower the result.
+    var asyncTaskPreamble = asyncTaskPrinter.finalize()
+    while asyncTaskPreamble.hasSuffix("\n") {
+      asyncTaskPreamble.removeLast()
+    }
     func innerBody(in printer: inout SwiftPrinter) -> String {
-      let loweredResult = nativeSignature.result.conversion.render(&printer, result)
+      let loweredResult = nativeSignature.result.conversion.render(&printer, result, asyncTaskPreamble: asyncTaskPreamble)
 
       if !decl.functionSignature.result.type.isVoid {
         return "return \(loweredResult)"
@@ -907,7 +928,6 @@ extension JNISwift2JavaGenerator {
       #endif
       #if compiler(>=6.4)
       @diagnose(DeprecatedDeclaration, as: ignored)
-      @diagnose(VariableNeverMutated, as: ignored)
       #endif
       @_cdecl("\(cName)")
       public func \(cName)(\(thunkParameters.joined(separator: .comma)))\(thunkReturnType)

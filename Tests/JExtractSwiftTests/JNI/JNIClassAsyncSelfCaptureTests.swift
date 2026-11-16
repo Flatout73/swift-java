@@ -16,10 +16,11 @@ import JExtractSwiftLib
 import SwiftJavaConfigurationShared
 import Testing
 
+/// An async thunk converts `self` inside its task, so the task does not capture the converted pointer.
 @Suite
 struct JNIAsyncSelfCaptureTests {
 
-  @Test("Import: class async method captures converted self pointer (Swift)")
+  @Test("Import: class async method converts self inside the task (Swift)")
   func classAsyncMethod_swift() throws {
     try assertOutput(
       input: """
@@ -34,19 +35,22 @@ struct JNIAsyncSelfCaptureTests {
         """
         @_cdecl("Java_com_example_swift_MyClass__00024compute__JLjava_util_concurrent_CompletableFuture_2")
         ...
-        nonisolated(unsafe) let selfPointerUnsafeSendable$ = selfPointer$
-        ...
         task = Task.immediate {
-        ...
-        let selfPointer$ = selfPointerUnsafeSendable$
+        var environment = try! JavaVirtualMachine.shared().environment()
+        assert(selfPointer != 0, "selfPointer memory address was null")
+        let selfPointerBits$ = Int(Int64(fromJNI: selfPointer, in: environment))
+        let selfPointer$ = UnsafeMutablePointer<MyClass>(bitPattern: selfPointerBits$)
         ...
         let swiftResult$ = await selfPointer$.pointee.compute()
         """
+      ],
+      notExpectedChunks: [
+        "UnsafeSendable$"
       ]
     )
   }
 
-  @Test("Import: protocol box async method captures loaded existential (Swift)")
+  @Test("Import: protocol box async method loads the existential inside the task (Swift)")
   func protocolBoxAsyncMethod_swift() throws {
     try assertOutput(
       input: """
@@ -61,27 +65,22 @@ struct JNIAsyncSelfCaptureTests {
         """
         @_cdecl("Java_com_example_swift_WorkerBox__00024work__JJLjava_util_concurrent_CompletableFuture_2")
         ...
-        #if swift(>=6)
-        nonisolated(unsafe) var selfPointerExistentialUnsafeSendable$ = selfPointerExistential$
-        #else
-        nonisolated(unsafe) let selfPointerExistentialUnsafeSendable$ = selfPointerExistential$
-        #endif
-        ...
         task = Task.immediate {
+        var environment = try! JavaVirtualMachine.shared().environment()
+        guard let selfPointerTypeMetadataPointer$ = UnsafeRawPointer(bitPattern: Int(Int64(fromJNI: selfTypePointer, in: environment))) else {
         ...
-        let selfPointerExistential$ = selfPointerExistentialUnsafeSendable$
+        let selfPointerExistential$ = selfPointerRawPointer$.load(as: selfPointerDynamicType$) as! (any Worker)
         ...
         let swiftResult$ = await selfPointerExistential$.work()
         """
       ],
       notExpectedChunks: [
-        "nonisolated(unsafe) let selfPointerUnsafeSendable$",
-        "nonisolated(unsafe) let selfTypePointerUnsafeSendable$",
+        "UnsafeSendable$"
       ]
     )
   }
 
-  @Test("Import: generic class async method captures only self pointer (Swift)")
+  @Test("Import: generic class async method converts self inside the task (Swift)")
   func genericClassAsyncMethod_swift() throws {
     try assertOutput(
       input: """
@@ -96,17 +95,16 @@ struct JNIAsyncSelfCaptureTests {
         """
         extension Box: _SwiftModule_Box_opener {
         ...
-        nonisolated(unsafe) let selfPointerUnsafeSendable$ = selfPointer$
-        ...
         task = Task.immediate {
-        ...
-        let selfPointer$ = selfPointerUnsafeSendable$
+        var environment = try! JavaVirtualMachine.shared().environment()
+        assert(selfPointer != 0, "selfPointer memory address was null")
+        let selfPointerBits$ = Int(Int64(fromJNI: selfPointer, in: environment))
         ...
         let swiftResult$ = await selfPointer$.pointee.compute()
         """
       ],
       notExpectedChunks: [
-        "selfTypePointerUnsafeSendable$"
+        "UnsafeSendable$"
       ]
     )
   }

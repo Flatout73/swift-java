@@ -16,12 +16,12 @@ import JExtractSwiftLib
 import SwiftJavaConfigurationShared
 import Testing
 
-/// The task closures of an async thunk are `sending`, so in the Swift 6 language mode they may only
-/// capture the converted parameters through `nonisolated(unsafe)` copies.
+/// The task closures of an async thunk are `sending`. The thunk converts the arguments inside the task,
+/// so the task captures only JNI values and global references, never the converted Swift values.
 @Suite
-struct JNIAsyncParameterCaptureTests {
+struct JNIAsyncArgumentConversionTests {
 
-  @Test("Import: async function captures a value parameter's pointer (Swift)")
+  @Test("Import: async function converts a value parameter inside the task (Swift)")
   func valueParameter_swift() throws {
     try assertOutput(
       input: """
@@ -37,26 +37,32 @@ struct JNIAsyncParameterCaptureTests {
       expectedChunks: [
         """
         @_cdecl("Java_com_example_swift_SwiftModule__00024async__JLjava_util_concurrent_CompletableFuture_2")
-        ...
-        nonisolated(unsafe) let pUnsafeSendable$ = p$
+        public func Java_com_example_swift_SwiftModule__00024async__JLjava_util_concurrent_CompletableFuture_2(environment: UnsafeMutablePointer<JNIEnv?>!, thisClass: jclass, p: jlong, result_future: jobject?) {
+        nonisolated(unsafe) let globalFuture = environment.interface.NewGlobalRef(environment, result_future)
+        var task: Task<Void, Never>? = nil
         ...
         task = Task.immediate {
-        ...
-        let p$ = pUnsafeSendable$
+        var environment = try! JavaVirtualMachine.shared().environment()
+        assert(p != 0, "p memory address was null")
+        let pBits$ = Int(Int64(fromJNI: p, in: environment))
+        let p$ = UnsafeMutablePointer<Payload>(bitPattern: pBits$)
         ...
         let swiftResult$ = await SwiftModule.async(p: p$.pointee)
         ...
         task = Task {
-        ...
-        let p$ = pUnsafeSendable$
+        var environment = try! JavaVirtualMachine.shared().environment()
+        assert(p != 0, "p memory address was null")
         ...
         let swiftResult$ = await SwiftModule.async(p: p$.pointee)
         """
+      ],
+      notExpectedChunks: [
+        "UnsafeSendable$"
       ]
     )
   }
 
-  @Test("Import: async function captures an optional class parameter's pointer (Swift)")
+  @Test("Import: async function converts an optional class parameter inside the task (Swift)")
   func optionalClassParameter_swift() throws {
     try assertOutput(
       input: """
@@ -70,18 +76,22 @@ struct JNIAsyncParameterCaptureTests {
       expectedChunks: [
         """
         @_cdecl("Java_com_example_swift_SwiftModule__00024async__JLjava_util_concurrent_CompletableFuture_2")
-        ...
-        nonisolated(unsafe) let cUnsafeSendable$ = c$
+        public func Java_com_example_swift_SwiftModule__00024async__JLjava_util_concurrent_CompletableFuture_2(environment: UnsafeMutablePointer<JNIEnv?>!, thisClass: jclass, c: jlong, result_future: jobject?) {
+        nonisolated(unsafe) let globalFuture = environment.interface.NewGlobalRef(environment, result_future)
         ...
         task = Task.immediate {
-        ...
-        let c$ = cUnsafeSendable$
+        var environment = try! JavaVirtualMachine.shared().environment()
+        let cBits$ = Int(Int64(fromJNI: c, in: environment))
+        let c$ = UnsafeMutablePointer<MyClass>(bitPattern: cBits$)
         """
+      ],
+      notExpectedChunks: [
+        "UnsafeSendable$"
       ]
     )
   }
 
-  @Test("Import: async function captures a protocol parameter's existential (Swift)")
+  @Test("Import: async function builds a protocol parameter's existential inside the task (Swift)")
   func protocolParameter_swift() throws {
     try assertOutput(
       input: """
@@ -97,24 +107,24 @@ struct JNIAsyncParameterCaptureTests {
       expectedChunks: [
         """
         @_cdecl("Java_com_example_swift_SwiftModule__00024async__Ljava_lang_Object_2Ljava_util_concurrent_CompletableFuture_2")
-        ...
-        #if swift(>=6)
-        nonisolated(unsafe) var nswiftObjectUnsafeSendable$ = nswiftObject$
-        #else
-        nonisolated(unsafe) let nswiftObjectUnsafeSendable$ = nswiftObject$
-        #endif
+        public func Java_com_example_swift_SwiftModule__00024async__Ljava_lang_Object_2Ljava_util_concurrent_CompletableFuture_2(environment: UnsafeMutablePointer<JNIEnv?>!, thisClass: jclass, n: jobject?, result_future: jobject?) {
+        nonisolated(unsafe) let n = environment.interface.NewGlobalRef(environment, n)
+        nonisolated(unsafe) let globalFuture = environment.interface.NewGlobalRef(environment, result_future)
         ...
         task = Task.immediate {
-        ...
-        let nswiftObject$ = nswiftObjectUnsafeSendable$
+        var environment = try! JavaVirtualMachine.shared().environment()
+        let nswiftObject$: (any Named)
         ...
         let swiftResult$ = await SwiftModule.async(n: nswiftObject$)
         """
+      ],
+      notExpectedChunks: [
+        "UnsafeSendable$"
       ]
     )
   }
 
-  @Test("Import: async function with primitive parameters captures nothing extra (Swift)")
+  @Test("Import: async function with primitive parameters converts them inline (Swift)")
   func primitiveParameters_swift() throws {
     try assertOutput(
       input: "public func async(i: Int64, s: String) async -> Int64",
@@ -125,6 +135,7 @@ struct JNIAsyncParameterCaptureTests {
         """
         @_cdecl("Java_com_example_swift_SwiftModule__00024async__JLjava_lang_String_2Ljava_util_concurrent_CompletableFuture_2")
         ...
+        let swiftResult$ = await SwiftModule.async(i: Int64(fromJNI: i, in: environment), s: String(fromJNI: s, in: environment))
         """
       ],
       notExpectedChunks: [
